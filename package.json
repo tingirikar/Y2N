@@ -1,0 +1,19 @@
+{
+  "name": "y2n",
+  "version": "1.0.0",
+  "description": "Y2N — YouTube to Notion Playlist Tracker. Sync YouTube playlists into trackable Notion databases.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": ["youtube", "notion", "playlist", "tracker"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@notionhq/client": "^2.2.15",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0"
+  }
+}

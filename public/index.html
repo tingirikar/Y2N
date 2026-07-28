@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Y2N — YouTube to Notion Playlist Tracker</title>
+  <meta name="description" content="Sync your YouTube playlists into Notion databases. Track your learning progress, mark videos as watched, and take notes — all from Notion." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <!-- Animated background particles -->
+  <div class="bg-particles" id="bgParticles" aria-hidden="true"></div>
+
+  <!-- Navbar -->
+  <nav class="navbar" id="navbar">
+    <div class="nav-brand">
+      <div class="nav-logo">
+        <span class="logo-yt">Y</span><span class="logo-2">2</span><span class="logo-n">N</span>
+      </div>
+      <span class="nav-tagline">YouTube → Notion</span>
+    </div>
+    <button class="nav-settings-btn" id="settingsToggle" aria-label="Open settings">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+      </svg>
+      <span>Settings</span>
+    </button>
+  </nav>
+
+  <!-- Settings Panel (Slide-in) -->
+  <div class="settings-overlay" id="settingsOverlay"></div>
+  <aside class="settings-panel" id="settingsPanel">
+    <div class="settings-header">
+      <h2>⚙️ API Settings</h2>
+      <button class="settings-close" id="settingsClose" aria-label="Close settings">✕</button>
+    </div>
+    <div class="settings-body">
+      <p class="settings-info">Your keys are stored locally in your browser and sent directly to the APIs. They are never saved on any server.</p>
+      
+      <div class="input-group">
+        <label for="youtubeKey">
+          <span class="label-icon">🔑</span> YouTube Data API Key
+        </label>
+        <input type="password" id="youtubeKey" placeholder="AIzaSy..." autocomplete="off" />
+        <a href="https://console.cloud.google.com/apis/credentials" target="_blank" class="help-link">Get your key →</a>
+      </div>
+
+      <div class="input-group">
+        <label for="notionKey">
+          <span class="label-icon">🔑</span> Notion Integration Token
+        </label>
+        <input type="password" id="notionKey" placeholder="ntn_..." autocomplete="off" />
+        <a href="https://developers.notion.com/docs/create-a-notion-integration" target="_blank" class="help-link">Create integration →</a>
+      </div>
+
+      <div class="input-group">
+        <label for="notionDatabaseId">
+          <span class="label-icon">🗃️</span> Notion Database ID
+        </label>
+        <input type="text" id="notionDatabaseId" placeholder="e.g. 8a2b3c4d5e6f..." autocomplete="off" />
+        <a href="https://developers.notion.com/reference/retrieve-a-database" target="_blank" class="help-link">How to find database ID →</a>
+      </div>
+
+      <button class="btn btn-save" id="saveSettings">Save Settings</button>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main">
+    <!-- Hero Section -->
+    <section class="hero" id="hero">
+      <div class="hero-badge">✨ Open Source & Free</div>
+      <h1 class="hero-title">
+        Turn YouTube Playlists into<br />
+        <span class="gradient-text">Trackable Notion Databases</span>
+      </h1>
+      <p class="hero-subtitle">
+        Paste a playlist link. Get a fully structured Notion database with every video — 
+        ready to track your progress, take notes, and never lose your place.
+      </p>
+
+      <!-- URL Input -->
+      <div class="sync-card" id="syncCard">
+        <div class="input-row">
+          <div class="url-input-wrapper">
+            <svg class="url-icon" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            <input
+              type="url"
+              id="playlistUrl"
+              class="url-input"
+              placeholder="Paste a YouTube playlist URL..."
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+          <button class="btn btn-sync" id="syncBtn">
+            <span class="btn-text">Sync to Notion</span>
+            <span class="btn-loader" aria-hidden="true">
+              <svg class="spinner" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="31.4 31.4" stroke-linecap="round"/></svg>
+            </span>
+          </button>
+        </div>
+
+        <!-- Progress Section -->
+        <div class="progress-section" id="progressSection">
+          <div class="progress-bar-track">
+            <div class="progress-bar-fill" id="progressFill"></div>
+          </div>
+          <div class="progress-status" id="progressStatus">Preparing...</div>
+        </div>
+
+        <!-- Error Display -->
+        <div class="error-card" id="errorCard">
+          <span class="error-icon">⚠️</span>
+          <span class="error-message" id="errorMessage"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Result Section -->
+    <section class="result-section" id="resultSection">
+      <div class="result-card">
+        <div class="result-icon">🎉</div>
+        <h2 class="result-title">Playlist Synced!</h2>
+        <p class="result-info" id="resultInfo"></p>
+        <a class="btn btn-notion" id="notionLink" href="#" target="_blank">
+          Open Playlist in Notion →
+        </a>
+        <button class="btn btn-another" id="syncAnotherBtn">Sync Another Playlist</button>
+      </div>
+    </section>
+
+    <!-- How It Works -->
+    <section class="how-section">
+      <h2 class="section-title">How it works</h2>
+      <div class="steps-grid">
+        <div class="step-card">
+          <div class="step-number">1</div>
+          <div class="step-icon">🔗</div>
+          <h3>Paste Link</h3>
+          <p>Drop any YouTube playlist URL into the input box above.</p>
+        </div>
+        <div class="step-card">
+          <div class="step-number">2</div>
+          <div class="step-icon">⚡</div>
+          <h3>Auto-Sync</h3>
+          <p>We fetch every video and add a trackable page with to-do items to your Notion database.</p>
+        </div>
+        <div class="step-card">
+          <div class="step-number">3</div>
+          <div class="step-icon">✅</div>
+          <h3>Track Progress</h3>
+          <p>Mark videos as watched, add notes, and track your learning in Notion.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>Built with ❤️ by <strong>Y2N</strong> • YouTube to Notion</p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,18 +1,12 @@
-// ─── Y2N — YouTube to Notion ─── Client-side Logic ────────────────────────── //
+// ─── Y2N — YouTube to Notion ─── Client-side Logic (OAuth-first) ──────────── //
 
 (function () {
   "use strict";
 
   // ── DOM Refs ────────────────────────────────────────────────────────────────
   const $ = (sel) => document.querySelector(sel);
-  const settingsToggle = $("#settingsToggle");
-  const settingsOverlay = $("#settingsOverlay");
-  const settingsPanel = $("#settingsPanel");
-  const settingsClose = $("#settingsClose");
-  const saveSettingsBtn = $("#saveSettings");
-  const youtubeKeyInput = $("#youtubeKey");
-  const notionKeyInput = $("#notionKey");
-  const notionDatabaseIdInput = $("#notionDatabaseId");
+  const notionStatus = $("#notionStatus");
+  const disconnectBtn = $("#disconnectBtn");
   const playlistUrlInput = $("#playlistUrl");
   const syncBtn = $("#syncBtn");
   const progressSection = $("#progressSection");
@@ -25,34 +19,110 @@
   const notionLink = $("#notionLink");
   const syncAnotherBtn = $("#syncAnotherBtn");
   const hero = $("#hero");
+  const selectedDbBar = $("#selectedDbBar");
+  const selectedDbIcon = $("#selectedDbIcon");
+  const selectedDbName = $("#selectedDbName");
+  const changeDbBtn = $("#changeDbBtn");
+  const dbModalOverlay = $("#dbModalOverlay");
+  const dbModal = $("#dbModal");
+  const dbList = $("#dbList");
+  const dbModalCancel = $("#dbModalCancel");
 
-  // ── Server-side config status ──────────────────────────────────────────────
-  let serverConfig = {
-    hasYoutubeKey: false,
-    hasNotionKey: false,
-    hasNotionDatabaseId: false,
-    allConfigured: false,
-  };
+  let serverConfig = { hasYoutubeKey: false, hasOAuth: false };
 
-  // Check what's already configured in .env on the server
+  // ── LocalStorage Keys ──────────────────────────────────────────────────────
+  const LS_NOTION_TOKEN = "y2n_notion_token";
+  const LS_DB_ID = "y2n_db_id";
+  const LS_DB_NAME = "y2n_db_name";
+  const LS_DB_ICON = "y2n_db_icon";
+  const LS_PENDING_URL = "y2n_pending_playlist_url";
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function getNotionToken() {
+    return localStorage.getItem(LS_NOTION_TOKEN) || "";
+  }
+
+  function getSelectedDb() {
+    const id = localStorage.getItem(LS_DB_ID);
+    const name = localStorage.getItem(LS_DB_NAME);
+    const icon = localStorage.getItem(LS_DB_ICON);
+    return id ? { id, name, icon } : null;
+  }
+
+  function saveSelectedDb(db) {
+    localStorage.setItem(LS_DB_ID, db.id);
+    localStorage.setItem(LS_DB_NAME, db.title || db.name);
+    localStorage.setItem(LS_DB_ICON, db.icon || "📄");
+  }
+
+  function clearNotionAuth() {
+    localStorage.removeItem(LS_NOTION_TOKEN);
+    localStorage.removeItem(LS_DB_ID);
+    localStorage.removeItem(LS_DB_NAME);
+    localStorage.removeItem(LS_DB_ICON);
+    localStorage.removeItem(LS_PENDING_URL);
+  }
+
+  // ── UI State Updates ───────────────────────────────────────────────────────
+  function updateConnectionUI() {
+    const token = getNotionToken();
+    const db = getSelectedDb();
+
+    if (token) {
+      notionStatus.style.display = "flex";
+    } else {
+      notionStatus.style.display = "none";
+    }
+
+    if (db) {
+      selectedDbBar.style.display = "flex";
+      selectedDbIcon.textContent = db.icon || "📄";
+      selectedDbName.textContent = db.name;
+    } else {
+      selectedDbBar.style.display = "none";
+    }
+  }
+
+  // ── Handle OAuth Callback ──────────────────────────────────────────────────
+  function handleOAuthCallback() {
+    const urlParams = new URLSearchParams(window.location.search);
+
+    if (urlParams.get("oauth_success") === "true") {
+      const token = urlParams.get("token");
+      if (token) {
+        localStorage.setItem(LS_NOTION_TOKEN, token);
+        showToast("🎉 Connected to Notion!");
+      }
+      // Clean URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+
+      // Check if there's a pending playlist URL to sync
+      const pendingUrl = localStorage.getItem(LS_PENDING_URL);
+      if (pendingUrl) {
+        playlistUrlInput.value = pendingUrl;
+        localStorage.removeItem(LS_PENDING_URL);
+        // Auto-trigger sync after a short delay
+        setTimeout(() => handleSync(), 500);
+      }
+    } else if (urlParams.get("oauth_error")) {
+      showError(`Notion connection failed: ${urlParams.get("oauth_error")}`);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }
+
+  // ── Load Server Config ─────────────────────────────────────────────────────
   async function loadServerConfig() {
     try {
       const res = await fetch("/api/config-status");
       if (res.ok) {
         serverConfig = await res.json();
-
-        // If all keys are in .env, hide the settings button entirely
-        if (serverConfig.allConfigured) {
-          settingsToggle.style.display = "none";
-        }
       }
     } catch {
-      // Server not reachable, user will need to configure manually
+      // Offline fallback
     }
   }
-  loadServerConfig();
 
-  // ── Particles Background ───────────────────────────────────────────────────
+  // ── Particles ──────────────────────────────────────────────────────────────
   function createParticles() {
     const container = $("#bgParticles");
     const colors = [
@@ -75,49 +145,19 @@
       container.appendChild(p);
     }
   }
-  createParticles();
 
-  // ── Interactive glow on step cards ─────────────────────────────────────────
-  document.querySelectorAll(".step-card").forEach((card) => {
-    card.addEventListener("mousemove", (e) => {
-      const rect = card.getBoundingClientRect();
-      card.style.setProperty("--mouse-x", `${e.clientX - rect.left}px`);
-      card.style.setProperty("--mouse-y", `${e.clientY - rect.top}px`);
+  // ── Step Card Glow ─────────────────────────────────────────────────────────
+  function setupStepCards() {
+    document.querySelectorAll(".step-card").forEach((card) => {
+      card.addEventListener("mousemove", (e) => {
+        const rect = card.getBoundingClientRect();
+        card.style.setProperty("--mouse-x", `${e.clientX - rect.left}px`);
+        card.style.setProperty("--mouse-y", `${e.clientY - rect.top}px`);
+      });
     });
-  });
-
-  // ── Settings Panel ─────────────────────────────────────────────────────────
-  function openSettings() {
-    settingsOverlay.classList.add("open");
-    settingsPanel.classList.add("open");
   }
 
-  function closeSettings() {
-    settingsOverlay.classList.remove("open");
-    settingsPanel.classList.remove("open");
-  }
-
-  settingsToggle.addEventListener("click", openSettings);
-  settingsOverlay.addEventListener("click", closeSettings);
-  settingsClose.addEventListener("click", closeSettings);
-
-  // Load saved keys from localStorage
-  function loadSettings() {
-    youtubeKeyInput.value = localStorage.getItem("y2n_youtube_key") || "";
-    notionKeyInput.value = localStorage.getItem("y2n_notion_key") || "";
-    notionDatabaseIdInput.value = localStorage.getItem("y2n_notion_database_id") || "";
-  }
-  loadSettings();
-
-  saveSettingsBtn.addEventListener("click", () => {
-    localStorage.setItem("y2n_youtube_key", youtubeKeyInput.value.trim());
-    localStorage.setItem("y2n_notion_key", notionKeyInput.value.trim());
-    localStorage.setItem("y2n_notion_database_id", notionDatabaseIdInput.value.trim());
-    closeSettings();
-    showToast("✅ Settings saved!");
-  });
-
-  // ── Toast Notification ─────────────────────────────────────────────────────
+  // ── Toast ──────────────────────────────────────────────────────────────────
   function showToast(message) {
     let toast = document.querySelector(".toast");
     if (!toast) {
@@ -130,12 +170,11 @@
     setTimeout(() => toast.classList.remove("show"), 2800);
   }
 
-  // ── Playlist URL Validation ────────────────────────────────────────────────
+  // ── Validation ─────────────────────────────────────────────────────────────
   function isValidPlaylistUrl(input) {
     if (!input) return false;
     const trimmed = input.trim();
 
-    // Raw playlist ID
     if (/^PL[A-Za-z0-9_-]+$/.test(trimmed)) return true;
 
     try {
@@ -147,12 +186,12 @@
         return !!url.searchParams.get("list");
       }
     } catch {
-      // not a valid URL
+      // non-URL
     }
     return false;
   }
 
-  // ── UI State Helpers ───────────────────────────────────────────────────────
+  // ── Error / Progress / Loading ─────────────────────────────────────────────
   function showError(msg) {
     errorMessage.textContent = msg;
     errorCard.classList.add("visible");
@@ -200,21 +239,83 @@
     playlistUrlInput.focus();
   }
 
-  // ── Check if keys are available (either from server .env or localStorage) ──
-  function hasRequiredKeys() {
-    const hasYt = serverConfig.hasYoutubeKey || !!localStorage.getItem("y2n_youtube_key");
-    const hasNotion = serverConfig.hasNotionKey || !!localStorage.getItem("y2n_notion_key");
-    const hasDb = serverConfig.hasNotionDatabaseId || !!localStorage.getItem("y2n_notion_database_id");
-    return hasYt && hasNotion && hasDb;
+  // ── Database Picker Modal ──────────────────────────────────────────────────
+  function openDbModal() {
+    dbModalOverlay.classList.add("open");
+    dbModal.classList.add("open");
+    fetchAndRenderDatabases();
   }
 
-  // ── Sync Handler ───────────────────────────────────────────────────────────
-  syncBtn.addEventListener("click", handleSync);
-  playlistUrlInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") handleSync();
-  });
-  syncAnotherBtn.addEventListener("click", resetToInput);
+  function closeDbModal() {
+    dbModalOverlay.classList.remove("open");
+    dbModal.classList.remove("open");
+  }
 
+  async function fetchAndRenderDatabases() {
+    const token = getNotionToken();
+    dbList.innerHTML = `
+      <div class="db-loading">
+        <svg class="spinner" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" stroke-dasharray="31.4 31.4" stroke-linecap="round"/></svg>
+        <span>Loading your databases...</span>
+      </div>
+    `;
+
+    try {
+      const res = await fetch("/api/list-databases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notionToken: token }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to load databases");
+      }
+
+      if (!data.databases || data.databases.length === 0) {
+        dbList.innerHTML = `
+          <div class="db-empty">
+            <p>😕 No databases found.</p>
+            <p class="db-empty-hint">Make sure you selected at least one database when connecting to Notion. Try disconnecting and reconnecting.</p>
+          </div>
+        `;
+        return;
+      }
+
+      dbList.innerHTML = "";
+      data.databases.forEach((db) => {
+        const item = document.createElement("button");
+        item.classList.add("db-item");
+        item.innerHTML = `
+          <span class="db-item-icon">${db.icon}</span>
+          <span class="db-item-title">${db.title}</span>
+        `;
+        item.addEventListener("click", () => {
+          saveSelectedDb(db);
+          updateConnectionUI();
+          closeDbModal();
+          showToast(`📁 Selected: ${db.title}`);
+
+          // If we were in the middle of a sync, continue it
+          const pendingUrl = playlistUrlInput.value.trim();
+          if (pendingUrl && isValidPlaylistUrl(pendingUrl)) {
+            setTimeout(() => performSync(pendingUrl), 300);
+          }
+        });
+        dbList.appendChild(item);
+      });
+    } catch (err) {
+      dbList.innerHTML = `
+        <div class="db-empty">
+          <p>❌ ${err.message}</p>
+          <p class="db-empty-hint">Your Notion connection may have expired. Try disconnecting and reconnecting.</p>
+        </div>
+      `;
+    }
+  }
+
+  // ── Main Sync Handler ─────────────────────────────────────────────────────
   async function handleSync() {
     hideError();
 
@@ -231,39 +332,47 @@
       return;
     }
 
-    // Check for API keys — server .env keys take priority
-    if (!hasRequiredKeys()) {
-      showError(
-        "Missing API keys! Click the ⚙️ Settings button in the top-right to add your YouTube API key, Notion token, and Database ID."
-      );
-      setTimeout(openSettings, 800);
+    // Step 1: Check if connected to Notion
+    const token = getNotionToken();
+    if (!token) {
+      // Save the playlist URL and redirect to OAuth
+      localStorage.setItem(LS_PENDING_URL, playlistUrl);
+      window.location.href = "/auth/notion";
       return;
     }
 
-    // Start sync
+    // Step 2: Check if database is selected
+    const db = getSelectedDb();
+    if (!db) {
+      // Show database picker
+      openDbModal();
+      return;
+    }
+
+    // Step 3: Perform the sync
+    await performSync(playlistUrl);
+  }
+
+  async function performSync(playlistUrl) {
+    const token = getNotionToken();
+    const db = getSelectedDb();
+
+    if (!token || !db) return;
+
     setLoading(true);
     showProgress("🎬 Connecting to YouTube...", 5);
 
     try {
-      // Only send keys from localStorage if server doesn't have them in .env
-      const body = { playlistUrl };
-      if (!serverConfig.hasYoutubeKey) {
-        body.youtubeApiKey = localStorage.getItem("y2n_youtube_key") || "";
-      }
-      if (!serverConfig.hasNotionKey) {
-        body.notionApiKey = localStorage.getItem("y2n_notion_key") || "";
-      }
-      if (!serverConfig.hasNotionDatabaseId) {
-        body.notionDatabaseId = localStorage.getItem("y2n_notion_database_id") || "";
-      }
-
       const response = await fetch("/api/sync-playlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          playlistUrl,
+          notionApiKey: token,
+          notionDatabaseId: db.id,
+        }),
       });
 
-      // Simulate progress during the request
       let fakeProgress = 10;
       const progressInterval = setInterval(() => {
         fakeProgress = Math.min(fakeProgress + Math.random() * 8, 90);
@@ -274,10 +383,15 @@
       clearInterval(progressInterval);
 
       if (!response.ok) {
+        // If token expired or unauthorized, clear auth and show error
+        if (response.status === 401 || response.status === 403) {
+          clearNotionAuth();
+          updateConnectionUI();
+          throw new Error("Notion connection expired. Please click 'Sync to Notion' to reconnect.");
+        }
         throw new Error(data.error || "Sync failed");
       }
 
-      // Show completion
       showProgress("✅ Playlist added to your database!", 100);
       await new Promise((resolve) => setTimeout(resolve, 800));
       hideProgress();
@@ -290,11 +404,42 @@
     }
   }
 
-  // ── Keyboard shortcut: Escape closes settings ─────────────────────────────
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeSettings();
+  // ── Event Listeners ────────────────────────────────────────────────────────
+  syncBtn.addEventListener("click", handleSync);
+  playlistUrlInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") handleSync();
+  });
+  syncAnotherBtn.addEventListener("click", resetToInput);
+
+  // Database modal
+  dbModalOverlay.addEventListener("click", (e) => {
+    if (e.target === dbModalOverlay) closeDbModal();
+  });
+  dbModalCancel.addEventListener("click", closeDbModal);
+  changeDbBtn.addEventListener("click", openDbModal);
+
+  // Disconnect
+  disconnectBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    clearNotionAuth();
+    updateConnectionUI();
+    showToast("🔌 Disconnected from Notion");
   });
 
-  // ── Auto-focus playlist input ──────────────────────────────────────────────
-  playlistUrlInput.focus();
+  // Escape key
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeDbModal();
+  });
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+  async function init() {
+    createParticles();
+    setupStepCards();
+    await loadServerConfig();
+    handleOAuthCallback();
+    updateConnectionUI();
+    playlistUrlInput.focus();
+  }
+
+  init();
 })();
